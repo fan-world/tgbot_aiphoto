@@ -387,50 +387,34 @@ async def cb_client_topup(
     if package is None:
         await callback.answer("Package not found.", show_alert=True)
         return
-
-    if bot_instance.audience.value == "ru" and bot_instance.payment_provider is PaymentProvider.PLATEGA:
-        await screen_renderer.show(
-            callback,
-            ScreenPayload(
-                text=app.i18n.t(
-                    profile.language_code,
-                    "client_payment_methods",
-                    credits=package.credits,
-                ),
-                keyboard=payment_methods_keyboard(profile.language_code, package.slug),
-                media_path=app.media.screen("client_shop"),
-            ),
+    # В бесплатной версии сразу начисляем кредиты пользователю и фиксируем платёж как PAID
+    try:
+        # Создаём запись в таблице payments и начисляем баланс
+        await app.payments.create_payment(
+            bot_instance_id=bot_instance.id,
+            end_user_id=profile.id,
+            amount_cents=package.amount_cents,
+            currency="",
+            provider=PaymentProvider.MANUAL,
+            direction=TransactionDirection.DEPOSIT,
+            status=PaymentStatus.PAID,
+            meta_json=json.dumps({"package_slug": package.slug, "credits": package.credits}),
         )
+        await app.users.add_balance(profile.id, package.credits)
+    except Exception:
+        await callback.answer(app.i18n.t(profile.language_code, "payment_create_error"), show_alert=True)
         return
 
-    quote = app.payment_registry.quote(
-        bot_instance.audience,
-        amount_cents=package.amount_cents,
-        locale=profile.language_code,
-    )
-    await app.payments.create_payment(
-        bot_instance_id=bot_instance.id,
-        end_user_id=profile.id,
-        amount_cents=package.amount_cents,
-        currency=quote.currency,
-        provider=quote.provider,
-        direction=TransactionDirection.DEPOSIT,
-        status=PaymentStatus.PENDING,
-    )
     await screen_renderer.show(
         callback,
         ScreenPayload(
             text=app.i18n.t(
                 profile.language_code,
-                "payment_placeholder",
-                provider=quote.provider.value,
-                amount=quote.text,
+                "client_payment_success",
+                credits=package.credits,
             ),
-            keyboard=shop_keyboard(
-                profile.language_code,
-                app.payment_registry.packages_for(bot_instance.audience),
-            ),
-            media_path=app.media.screen("client_shop"),
+            keyboard=profile_keyboard(profile.language_code),
+            media_path=app.media.screen("client_done"),
         ),
     )
 
